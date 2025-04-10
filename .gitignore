@@ -3,3 +3,9 @@ jobs*
 
 # macOS system files
 .DS_Store
+
+# embedding files
+*.npy
+
+# unnecessary PDF
+Vector Search Implementation Plan.pdf

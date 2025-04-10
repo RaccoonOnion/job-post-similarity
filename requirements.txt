@@ -3,3 +3,5 @@ matplotlib
 seaborn
 wordcloud
 bs4
+sentence_transformers
+numpy
