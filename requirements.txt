@@ -7,3 +7,4 @@ sentence_transformers
 numpy
 faiss-cpu # or faiss-gpu if you have a compatible GPU
 pickle
+scikit-learn

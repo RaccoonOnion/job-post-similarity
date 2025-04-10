@@ -4,8 +4,13 @@ jobs*
 # macOS system files
 .DS_Store
 
+# Python bytecode
+*.pyc
+__pycache__/
+
 # embedding files
 *.npy
 
 # unnecessary PDF
 Vector Search Implementation Plan.pdf
+Evaluation Plan Summary.pdf
