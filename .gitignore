@@ -16,3 +16,4 @@ verify_match.py
 app/fetch_jd.py
 analysis_files/qual*.md
 README.pdf
+Thumbnail*

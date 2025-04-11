@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   similarity_app:
     # Build the Docker image using the Dockerfile in the current directory (.)

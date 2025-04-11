@@ -1,119 +1,145 @@
 # Job Post Similarity Detection
 
 ## Video Resource
-YouTube Video: [Job Post Similarity Detection](https://youtu.be/5XQYQZQYQYQ)
-
+[![Watch the video]](https://youtu.be/11H3C3HqTAo)
 ## Objective
-This project identifies duplicate or highly similar job postings from a given dataset using text embeddings and vector search techniques. It leverages Natural Language Processing (NLP) and demonstrates software engineering practices through containerization with Docker Compose.
+This project identifies duplicate or highly similar job postings from a given dataset using text embeddings and vector search techniques. It leverages Natural Language Processing (NLP) and demonstrates software engineering practices through containerization with Docker Compose. The pipeline is designed to be configurable and utilizes caching for intermediate results.
 
 ## Table of Contents
 1.  [Project Structure](#project-structure)
-2.  [Data Exploration & Preprocessing](#data-exploration--preprocessing)
-3.  [Embedding Generation](#embedding-generation)
-4.  [Vector Search Implementation](#vector-search-implementation)
-5.  [Evaluation Techniques](#evaluation-techniques)
+2.  [Setup and Running](#setup-and-running)
+3.  [Configuration](#configuration)
+4.  [Pipeline Workflow](#pipeline-workflow)
+    * [Data Exploration & Preprocessing](#data-exploration--preprocessing)
+    * [Embedding Generation](#embedding-generation)
+    * [Vector Search & Indexing](#vector-search--indexing)
+    * [Similarity Calculation](#similarity-calculation)
+5.  [Evaluation Approach](#evaluation-approach)
 
 ## Project Structure
 The project is organized as follows:
 
+```text
+job-post-similarity/
+├── .env                     # Local environment variables (Create from placeholder)
+├── Dockerfile               # Defines the Docker image
+├── LICENSE                  # Project license file
+├── README.md                # Project documentation (This file)
+├── analysis_files/          # Output directory for results and analysis plots
+│   ├── EDA_preprocess.pdf     # (Optional) PDF export of EDA notebook
+│   ├── Embedding Model Choice Justification.pdf # (Optional) Justification document
+│   ├── Similarity Threshold Justification.pdf # (Optional) Justification document
+│   ├── qual_analysis_first_row.pdf  # (Optional) Example qualitative analysis output
+│   ├── qual_analysis_last_row.pdf   # (Optional) Example qualitative analysis output
+│   ├── qualitative_analysis_results.csv # Output from evaluation.py (if run)
+│   ├── similarity_distribution.png      # Output from evaluation.py (if run)
+│   └── similarity_results.csv           # Final output from main.py
+├── app/                     # Source code directory
+│   ├── EDA_proprocess.ipynb   # Jupyter notebook for EDA
+│   ├── evaluation.py          # Script for evaluation methods (qualitative, distribution)
+│   ├── fetech_jd.py           # (Potentially for qualitative analysis details)
+│   ├── generate_embeddings.py # Module for embedding generation logic
+│   ├── main.py                # Main script to run the pipeline
+│   ├── preprocess_data.py     # Module for data preprocessing logic
+│   └── vector_search.py       # Module containing the VectorSearch class (Faiss wrapper)
+├── data/                    # Data directory (mounted as volume)
+│   ├── jobs.csv               # Input: Raw job data (Place here before running)
+│   ├── jobs_processed.csv     # Output: Processed data
+│   ├── job_embeddings.npy     # Output: Generated embeddings
+│   ├── job_ids.npy            # Output: IDs corresponding to embeddings
+│   ├── faiss_index.index      # Output: Saved Faiss index
+│   └── id_map.pkl             # Output: Saved Faiss ID map
+├── docker-compose.yml       # Docker Compose configuration file
+└── requirements.txt         # Python dependencies
 ```
-job-post-similarity
-├─ .env
-├─ .env.placeholder
-├─ Dockerfile
-├─ EDA_preprocess.ipynb
-├─ LICENSE
-├─ README.md
-├─ analysis_files
-│  ├─ EDA_proprocess.pdf
-│  ├─ Embedding Model Choice Justification.pdf
-│  ├─ Similarity Threshold Justification.pdf
-│  ├─ qual_analysis_first_row.pdf
-│  ├─ qual_analysis_last_row.pdf
-│  ├─ qualitative_analysis_results.csv
-│  └─ similarity_distribution.png
-├─ app
-│  ├─ fetech_jd.py
-│  ├─ generate_embeddings.py
-│  ├─ main.py
-│  ├─ preprocess_data.py
-│  └─ vector_search.py
-├─ data
-├─ docker-compose.yml
-└─ requirements.txt
 
-```
+## Setup and Running
 
-## Data Exploration & Preprocessing
+### Prerequisites
+* Docker ([Install Docker](https://docs.docker.com/get-docker/))
+* Docker Compose ([Usually included with Docker Desktop](https://docs.docker.com/compose/install/))
 
-### Data Exploration (`EDA_preprocess.ipynb`)
-Initial analysis of the `jobs.csv` dataset (100k rows, 17 columns) revealed several key points:
-* **Identifier:** `lid` column contains unique identifiers.
-* **Content:** `jobDescRaw` contains job descriptions in HTML format. `jobTitle` and `companyName` provide basic job info. "Delivery Driver" and "DoorDash" were most frequent.
-* **Missing Data:** Low percentage of missing values in location, company name, and date columns.
-* **Duplicates:** No exact row duplicates, but ~4,700 duplicates found based on title, company, zipcode, and date combination. Some raw HTML descriptions were also duplicates.
-* **Location Data:** Inconsistencies noted, like trailing commas in `finalState` and "remote" values in `finalZipcode`.
-* **NLP Columns:** Columns like `nlpSkills`, `nlpBenefits` often contain empty lists.
-* **Visualization:** Word clouds (using the `wordcloud` library) were used to visualize common terms in job descriptions.
+### Setup Steps
+1.  **Clone Repository:** Get the project code.
+    ```bash
+    git clone https://github.com/RaccoonOnion/job-post-similarity.git
+    cd job-post-similarity
+    ```
+2.  **Place Data:** Download the `jobs.csv` file and place it inside the `data/` directory. Create the `data/` directory if it doesn't exist.
+3.  **Configure Environment:**
+    * Edit the `.env` file to set the desired parameters (see [Configuration](#configuration) section below).
 
-### Preprocessing (`app/preprocess_data.py`)
-Based on the EDA, the following preprocessing steps are performed by the script when `main.py` is run:
-1.  **Load Data:** Reads the original `jobs.csv` from the `data/` folder.
-2.  **HTML Parsing:** Extracts clean text from `jobDescRaw` into `jobDescClean` using BeautifulSoup.
-3.  **Handle Missing Values:** Fills NaNs in categorical/location columns with 'Unknown'; drops rows with missing `correctDate`.
-4.  **Remove Duplicates:** Drops duplicate rows based on `['jobTitle', 'companyName', 'finalZipcode', 'correctDate']`.
-5.  **Clean Location:** Standardizes `finalState` (removes trailing commas), `finalZipcode` (handles "remote"), and `finalCity` (title cases).
-6.  **Clean Text:** Converts `jobDescClean` to lowercase and removes extra whitespace.
-7.  **Drop Columns:** Removes unused columns like `jobDescRaw`, `nlp*` columns, URLs, etc.
-8.  **Save:** Outputs the cleaned data to `jobs_processed.csv` (likely inside the container's `/app/data` directory during Docker execution).
+### Running the Pipeline
+1.  **Build and Run:** Open a terminal in the project's root directory (where `docker-compose.yml` is located) and run:
+    ```bash
+    docker compose up --build
+    ```
+    * `--build`: Rebuilds the Docker image if the `Dockerfile` or code in `app/` has changed. Omit this if you only changed the `.env` file or `jobs.csv`.
+    * This command starts the `similarity_app` service defined in `docker-compose.yml`.
+    * The container runs the `app/main.py` script.
+2.  **Process:** The script will perform the following, checking for existing files at each stage:
+    * Preprocess `data/jobs.csv` -> `data/jobs_processed.csv` (if needed).
+    * Generate embeddings -> `data/job_embeddings.npy`, `data/job_ids.npy` (if needed).
+    * Build/Train Faiss index -> `data/faiss_index.index`, `data/id_map.pkl` (if needed).
+    * Perform similarity search.
+    * Save results -> `analysis_files/similarity_results.csv`.
+3.  **Output:** The generated files (`jobs_processed.csv`, `.npy` files, `.index`, `.pkl`, `similarity_results.csv`) will appear in your local `data/` and `analysis_files/` directories due to the volume mounts defined in `docker-compose.yml`. They will persist after the container stops.
 
-## Embedding Generation
+## Configuration
+Key parameters can be configured by editing the `.env` file before running `docker compose up`:
 
-### Model Choice (`Embedding Model Choice Justification.pdf`)
-* **Model:** `sentence-transformers` library with the `all-MiniLM-L6-v2` pre-trained model is used.
-* **Justification:**
-    * Optimized for semantic similarity of sentences/paragraphs, capturing context better than word embeddings (GloVe, CBOW).
-    * The library provides a simple API for loading models and generating embeddings.
-    * `all-MiniLM-L6-v2` offers a good balance of performance and efficiency for this task.
-    * Transformer-based models handle job description nuances and terminology well.
-    * Outperforms averaging word vectors or using general spaCy models for this specific similarity task.
+* `INDEX_DESCRIPTION`: The Faiss index type string (Default: `HNSW32`). Options include `IndexFlatL2` (exact but slow/memory-heavy), `IVF100,Flat` (needs training), `HNSW32` (fast, no training).
+* `SIMILARITY_THRESHOLD`: The cosine similarity score threshold to consider jobs duplicates (Default: `0.90`).
+* `SEARCH_SAMPLE_SIZE`: Number of jobs to use as queries for the final similarity search. Leave empty or set high (e.g., >91000) to search using all jobs. Set to a lower number (e.g., `10000`) for faster testing/sampling. (Default: `""` - full search).
+* `USE_GPU`: Set to `True` to attempt using GPU acceleration (requires `faiss-gpu` in `requirements.txt` and appropriate host setup). Set to `False` to force CPU. (Default: `False`).
 
-### Implementation (`app/generate_embeddings.py` logic within `main.py`)
-* The `main.py` script loads the `sentence-transformers` model.
-* It reads the `jobDescClean` column from the processed data.
-* It encodes the descriptions into 384-dimensional vectors.
-* The embeddings array (`job_embeddings.npy`) and corresponding `lid` array (`job_ids.npy`) are saved (likely inside the container's `/app/data` directory during Docker execution) or loaded if they already exist.
+## Pipeline Workflow
 
-### Hugging Face Authentication
-* **Note:** While some Hugging Face models require authentication (using `huggingface-cli login` or setting the `HF_TOKEN` environment variable), standard models like `all-MiniLM-L6-v2` typically download automatically without needing explicit login or tokens. Authentication is usually only necessary for private or gated models.
+The `app/main.py` script orchestrates the pipeline:
 
-## Vector Search Implementation
+### Data Exploration & Preprocessing
+* **EDA:** Initial analysis was performed in `app/EDA_proprocess.ipynb`. Key findings include the need for HTML parsing, handling minor missing data, removing duplicates based on key fields, and cleaning location data.
+* **Preprocessing (`app/preprocess_data.py`):** If `data/jobs_processed.csv` doesn't exist, `main.py` calls this module to:
+    1.  Load `data/jobs.csv`.
+    2.  Parse HTML from `jobDescRaw` into `jobDescClean`.
+    3.  Handle missing values (fill/drop).
+    4.  Remove duplicate job postings.
+    5.  Clean location fields (`finalState`, `finalZipcode`, `finalCity`).
+    6.  Clean text (`jobDescClean`: lowercase, whitespace).
+    7.  Drop unused columns.
+    8.  Save the result to `data/jobs_processed.csv`.
 
-### Library Choice (`Vector Search Implementation Plan.pdf`)
-* **Library:** `Faiss` (Facebook AI Similarity Search) is used.
-* **Justification:**
-    * Offers comprehensive and flexible indexing options (exact search like `IndexFlatL2`, ANN methods like HNSW, IVF).
-    * Highly optimized for performance.
-    * Mature library with good documentation and community support.
-    * Fits project scope without the overhead of a full vector database.
+### Embedding Generation
+* **Model (`app/generate_embeddings.py`):** Uses `sentence-transformers` with `all-MiniLM-L6-v2` (configurable via `EMBEDDING_MODEL_NAME` in `main.py`, though not currently an env var). This model is chosen for its balance of speed and performance on semantic similarity tasks.
+* **Process (`app/main.py` calls functions from `generate_embeddings.py`):** If `data/job_embeddings.npy` or `data/job_ids.npy` don't exist:
+    1.  Loads `data/jobs_processed.csv`.
+    2.  Loads the embedding model.
+    3.  Encodes the `jobDescClean` text into vectors.
+    4.  Saves embeddings to `data/job_embeddings.npy` and corresponding `lid`s to `data/job_ids.npy`.
 
-### Implementation (`app/vector_search.py`)
-* A `VectorSearch` class encapsulates Faiss operations.
-* **`__init__`:** Initializes the Faiss index using `faiss.index_factory` (using `IndexFlatL2` for exact L2 distance search) and an `id_map` list to link Faiss indices back to original `lid`s.
-* **`train`:** Handles index training if required by the index type (not needed for `IndexFlatL2`).
-* **`add`:** Adds batches of embeddings (converting to float32) and appends corresponding original string IDs to the `id_map`.
-* **`remove`:** Not implemented efficiently for `IndexFlatL2`; raises `NotImplementedError`, recommending rebuilding the index if removal is needed.
-* **`search`:** Finds k-nearest neighbors using `index.search`, returning L2 distances and the original string IDs (retrieved via `id_map`). Handles single vector queries and cases where k > number of indexed items.
-* **`save`/`load`:** Methods to save the Faiss index (`faiss.write_index`) and the `id_map` (using pickle) to disk, and load them back.
+### Vector Search & Indexing
+* **Library (`app/vector_search.py`):** Uses `Faiss` via the `VectorSearch` wrapper class. This class handles index creation (CPU/GPU), training (if needed by index type), adding vectors, searching, saving, and loading.
+* **Process (`app/main.py`):**
+    1.  Initializes `VectorSearch` with the dimension, `INDEX_DESCRIPTION`, and `USE_GPU` setting from the environment variables.
+    2.  Checks if `data/faiss_index.index` and `data/id_map.pkl` exist.
+    3.  If yes, loads the existing index and ID map.
+    4.  If no, it builds the index:
+        * Calls `vector_searcher.train()` if the chosen index type requires it (e.g., `IVF100,Flat`).
+        * Calls `vector_searcher.add()` in batches to add all embeddings and IDs.
+        * Calls `vector_searcher.save()` to persist the index and ID map to the `data/` directory.
 
-## Evaluation Techniques
+### Similarity Calculation
+* **Process (`app/main.py`):**
+    1.  Determines the query set (all embeddings or a sample based on `SEARCH_SAMPLE_SIZE`).
+    2.  Calls `vector_searcher.search()` to find the top `k=2` neighbors for each query vector in the full index.
+    3.  Calculates the cosine similarity between each query and its nearest neighbor (excluding itself).
+    4.  Filters the results, keeping only pairs with similarity >= `SIMILARITY_THRESHOLD`.
+    5.  Stores unique pairs (Job ID 1, Job ID 2, Similarity Score) ensuring ID1 < ID2.
+    6.  Saves the resulting pairs, sorted by similarity, to `analysis_files/similarity_results.csv`.
 
-### Accuracy Check (`Evaluation Plan Summary.pdf`)
-Since no ground truth is available, accuracy is assessed via:
-1.  **Qualitative Analysis:** Randomly sampling jobs, finding nearest neighbors using `VectorSearch.search`, and manually reviewing if the retrieved neighbors are actual duplicates or highly similar. (See `analysis_files/qual_analysis_first_row.pdf` and `analysis_files/qual_analysis_last_row.pdf` for examples of this analysis output).
-2.  **Similarity Score Distribution:** Plotting histograms of cosine similarity scores for (a) nearest neighbor pairs (likely duplicates) and (b) random pairs (likely non-duplicates) . This helps visualize if embeddings effectively separate similar/dissimilar items. The generated plot can be found in `analysis_files/similarity_distribution.png`.
-
-### Similarity Threshold (`Similarity Threshold Justification.pdf`)
-* **Method:** The similarity score distributions (see `analysis_files/similarity_distribution.png`) are examined to find a threshold that separates likely duplicates from non-duplicates. Qualitative spot-checking refines the choice.
-* **Chosen Threshold:** **0.90** (Cosine Similarity).
-* **Justification:** This threshold provides a good balance, lying in a region where random pair density is near zero (minimizing false positives) while still capturing the majority of the nearest neighbor distribution peak. It prioritizes precision, as confirmed by manual checks.
+## Evaluation Approach
+* **Ground Truth:** No ground truth labels for duplicates were provided.
+* **Methods Used (`app/evaluation.py`):** The evaluation script (run separately or its functions adapted) uses these techniques primarily for analysis and threshold justification:
+    1.  **Qualitative Analysis:** Manually inspecting nearest neighbors for a random sample of jobs to gauge relevance (`analysis_files/qualitative_analysis_results.csv`).
+    2.  **Similarity Distribution Plot:** Comparing the distribution of similarity scores for nearest neighbors (likely duplicates) vs. random pairs (likely non-duplicates) to inform threshold selection (`analysis_files/similarity_distribution.png`).
+* **Threshold:** A cosine similarity threshold of **0.90** (configurable via `.env`) is used in `main.py` to identify potential duplicates based on prior analysis. This prioritizes precision. **Because in real world settings, the cost of false positives (annoying users with too frequent alerts) is higher than false negatives (not able to catch all duplicates).**
