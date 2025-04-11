@@ -1,7 +1,7 @@
 # Job Post Similarity Detection
 
 ## Video Resource
-[![Watch the video]](https://youtu.be/11H3C3HqTAo)
+[[Watch the video]](https://youtu.be/11H3C3HqTAo)
 ## Objective
 This project identifies duplicate or highly similar job postings from a given dataset using text embeddings and vector search techniques. It leverages Natural Language Processing (NLP) and demonstrates software engineering practices through containerization with Docker Compose. The pipeline is designed to be configurable and utilizes caching for intermediate results.
 
