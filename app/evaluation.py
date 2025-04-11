@@ -10,6 +10,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 # Assuming VectorSearch class is in vector_search.py
 try:
+    # Use the version with GPU support (vector_search_gpu immersive)
     from vector_search import VectorSearch
 except ImportError:
     logging.error("Error: Ensure VectorSearch class is defined in vector_search.py.")
@@ -73,11 +74,11 @@ def load_evaluation_data(embeddings_path, ids_path, processed_data_path, id_colu
 def build_faiss_index(vector_searcher, embeddings, ids, batch_size=10000):
     """Builds the Faiss index by adding embeddings in batches."""
     logging.info("--- Building Faiss Index ---")
+    # Training is handled within VectorSearch based on index type and GPU status
     if not vector_searcher.index.is_trained:
-        logging.info("Index requires training (e.g., IVF). Training...")
-        # For simplicity, train on all data if needed. Consider subset for large datasets.
+        logging.info("Index requires training. Calling train method...")
         try:
-            vector_searcher.train(embeddings)
+            vector_searcher.train(embeddings) # Pass all embeddings
         except Exception as e:
             logging.error(f"Faiss index training failed: {e}")
             raise
@@ -88,7 +89,7 @@ def build_faiss_index(vector_searcher, embeddings, ids, batch_size=10000):
         for i in range(0, len(embeddings), batch_size):
             emb_batch = embeddings[i:i+batch_size]
             id_batch = ids[i:i+batch_size]
-            if len(emb_batch) > 0: # Ensure batch is not empty
+            if len(emb_batch) > 0:
                  vector_searcher.add(emb_batch, id_batch)
                  num_added += len(emb_batch)
                  logging.info(f"Added batch {i//batch_size + 1}... Total added: {num_added}")
@@ -104,7 +105,7 @@ def perform_qualitative_analysis(vector_searcher, embeddings, ids, df_processed,
     logging.info("--- Performing Qualitative Analysis ---")
     if sample_size <= 0:
         logging.info("Sample size is 0 or less. Skipping qualitative analysis.")
-        return [] # Return empty list if no analysis done
+        return []
 
     if sample_size > vector_searcher.ntotal:
         logging.warning(f"Sample size ({sample_size}) > index size ({vector_searcher.ntotal}). Using index size.")
@@ -117,8 +118,8 @@ def perform_qualitative_analysis(vector_searcher, embeddings, ids, df_processed,
     query_embeddings_sample = embeddings[random_indices]
 
     logging.info(f"Searching for {k + 1} neighbors for {sample_size} sample jobs...")
-    # Search N+1 to exclude self-match easily
-    distances_l2, neighbor_indices_internal = vector_searcher.index.search(query_embeddings_sample, k + 1)
+    # Use the search method from the VectorSearch class
+    distances_l2, neighbor_ids_list = vector_searcher.search(query_embeddings_sample, k + 1)
 
     qualitative_results = []
     nearest_neighbor_similarities = []
@@ -127,20 +128,20 @@ def perform_qualitative_analysis(vector_searcher, embeddings, ids, df_processed,
         query_id = ids[query_idx_in_embeddings]
         query_title = "N/A"
         if df_processed is not None and query_id in df_processed.index:
-            query_title = df_processed.loc[query_id].get('jobTitle', "N/A") # Use .get for safety
+            query_title = df_processed.loc[query_id].get('jobTitle', "N/A")
 
         result_row = {'Query_ID': query_id, 'Query_Title': query_title}
-        neighbor_faiss_ids = neighbor_indices_internal[i]
-        neighbor_distances = distances_l2[i]
+        # neighbor_ids_list already contains original IDs
+        query_neighbor_ids = neighbor_ids_list[i]
+        query_neighbor_distances = distances_l2[i]
 
         valid_neighbor_count = 0
-        for j in range(1, k + 1): # Iterate through neighbors, skipping the first (self)
-            if j >= len(neighbor_faiss_ids): break # Break if fewer than k+1 results returned
+        # Iterate from index 1 (skip self) up to k neighbors found
+        for j in range(1, min(k + 1, len(query_neighbor_ids))):
+            neighbor_id = query_neighbor_ids[j]
+            neighbor_distance = query_neighbor_distances[j]
 
-            neighbor_faiss_id = neighbor_faiss_ids[j]
-            if neighbor_faiss_id != -1 and neighbor_faiss_id < len(ids):
-                neighbor_id = ids[neighbor_faiss_id]
-                neighbor_distance = neighbor_distances[j]
+            if neighbor_id is not None: # Check if a valid neighbor was returned
                 neighbor_similarity = l2_to_cosine_similarity(neighbor_distance)
 
                 neighbor_title = "N/A"
@@ -151,14 +152,15 @@ def perform_qualitative_analysis(vector_searcher, embeddings, ids, df_processed,
                 result_row[f'Neighbor_{j}_Title'] = neighbor_title
                 result_row[f'Neighbor_{j}_Similarity'] = round(neighbor_similarity, 4)
 
-                if j == 1: # Store similarity of the *actual* nearest neighbor (excluding self)
+                if j == 1: # Store similarity of the actual nearest neighbor
                     nearest_neighbor_similarities.append(neighbor_similarity)
                 valid_neighbor_count += 1
             else:
-                # Handle cases where fewer than k neighbors are found or index is invalid
-                result_row[f'Neighbor_{j}_ID'] = None
-                result_row[f'Neighbor_{j}_Title'] = None
-                result_row[f'Neighbor_{j}_Similarity'] = None
+                # Handle cases where search returned None (e.g., k > ntotal)
+                 result_row[f'Neighbor_{j}_ID'] = None
+                 result_row[f'Neighbor_{j}_Title'] = None
+                 result_row[f'Neighbor_{j}_Similarity'] = None
+
 
         # Fill remaining columns if fewer than K valid neighbors found
         for j in range(valid_neighbor_count + 1, k + 1):
@@ -194,10 +196,9 @@ def calculate_random_pair_similarity(embeddings, sample_size):
         logging.info("Random pair similarity calculation complete.")
     except Exception as e:
         logging.error(f"Error calculating random pair similarities: {e}")
-        # Return potentially partial list or empty list on error
     return random_pair_similarities
 
-def plot_similarity_distribution(nearest_neighbor_sims, random_pair_sims, output_png): # Argument is random_pair_sims
+def plot_similarity_distribution(nearest_neighbor_sims, random_pair_sims, output_png):
     """Plots and saves the similarity distributions."""
     logging.info("Plotting similarity distributions...")
     if not nearest_neighbor_sims and not random_pair_sims:
@@ -208,7 +209,6 @@ def plot_similarity_distribution(nearest_neighbor_sims, random_pair_sims, output
     if nearest_neighbor_sims:
         plot_data_list.append(pd.DataFrame({'Similarity': nearest_neighbor_sims, 'Type': 'Nearest Neighbor (Likely Duplicate)'}))
     if random_pair_sims:
-        # *** FIX: Use the correct argument name 'random_pair_sims' here ***
         plot_data_list.append(pd.DataFrame({'Similarity': random_pair_sims, 'Type': 'Random Pair (Non-Duplicate)'}))
 
     if not plot_data_list:
@@ -227,7 +227,6 @@ def plot_similarity_distribution(nearest_neighbor_sims, random_pair_sims, output
         plt.tight_layout()
         plt.savefig(output_png)
         logging.info(f"Similarity distribution plot saved to {output_png}")
-        # plt.show()
         plt.close()
     except Exception as e:
         logging.error(f"Error saving or generating plot: {e}")
@@ -238,7 +237,10 @@ def evaluate_similarity(
     processed_data_path='data/jobs_processed.csv',
     id_column_processed='lid',
     index_dimension=384,
-    index_description='IndexFlatL2',
+    # --- MODIFICATION: Changed default index description ---
+    index_description='IVF100,Flat',
+    # --- ---
+    use_gpu=False, # Default to CPU for evaluation script unless specified
     qualitative_sample_size=50,
     neighbors_k=5,
     random_pairs_sample_size=5000,
@@ -247,21 +249,25 @@ def evaluate_similarity(
     """Main function to orchestrate the evaluation process."""
 
     logging.info("--- Starting Evaluation Script ---")
-    # Create output directory if it doesn't exist
     output_dir = os.path.dirname(qualitative_output_csv)
-    if output_dir:
-        os.makedirs(output_dir, exist_ok=True)
+    if output_dir: os.makedirs(output_dir, exist_ok=True)
     plot_dir = os.path.dirname(plot_output_png)
-    if plot_dir:
-         os.makedirs(plot_dir, exist_ok=True)
-
+    if plot_dir: os.makedirs(plot_dir, exist_ok=True)
 
     try:
         embeddings, job_ids, df_processed = load_evaluation_data(
             embeddings_path, ids_path, processed_data_path, id_column_processed
         )
 
-        vector_searcher = VectorSearch(dimension=index_dimension, index_description=index_description)
+        # --- MODIFICATION: Pass updated index_description and use_gpu flag ---
+        vector_searcher = VectorSearch(
+            dimension=index_dimension,
+            index_description=index_description, # Use IVF100,Flat (or passed value)
+            use_gpu=use_gpu # Pass GPU flag
+        )
+        # --- ---
+
+        # Build index (will train if using IVF)
         build_faiss_index(vector_searcher, embeddings, job_ids)
 
         nearest_neighbor_similarities = perform_qualitative_analysis(
@@ -269,16 +275,13 @@ def evaluate_similarity(
             qualitative_sample_size, neighbors_k, qualitative_output_csv
         )
 
-        # *** FIX: Assign the result to the variable ***
         random_pair_similarities = calculate_random_pair_similarity(
             embeddings, random_pairs_sample_size
         )
 
-        # *** FIX: Also corrected variable name in the DataFrame creation inside this function ***
         plot_similarity_distribution(
             nearest_neighbor_similarities, random_pair_similarities, plot_output_png
         )
-
 
     except (FileNotFoundError, ValueError, RuntimeError) as e:
         logging.error(f"Evaluation failed: {e}")
@@ -290,7 +293,6 @@ def evaluate_similarity(
 
 # Example execution block
 if __name__ == "__main__":
-    # Define paths relative to script location or use absolute paths/config
     DATA_DIR = 'data'
     ANALYSIS_DIR = 'analysis_files'
 
@@ -299,6 +301,9 @@ if __name__ == "__main__":
         ids_path=os.path.join(DATA_DIR, 'job_ids.npy'),
         processed_data_path=os.path.join(DATA_DIR, 'jobs_processed.csv'),
         qualitative_output_csv=os.path.join(ANALYSIS_DIR, 'qualitative_analysis_results.csv'),
-        plot_output_png=os.path.join(ANALYSIS_DIR, 'similarity_distribution.png')
-        # Keep other parameters as defaults or load from config
+        plot_output_png=os.path.join(ANALYSIS_DIR, 'similarity_distribution.png'),
+        # Explicitly set index type here if different from default
+        index_description='IVF100,Flat',
+        use_gpu=False # Keep False if running on Macbook
+        # Keep other parameters as defaults or adjust as needed
     )
