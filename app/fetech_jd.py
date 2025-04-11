@@ -3,8 +3,10 @@ import numpy as np
 import os
 
 # --- Configuration ---
-QUALITATIVE_RESULTS_CSV = 'qualitative_analysis_results.csv'
-PROCESSED_JOBS_CSV = 'jobs_processed.csv' # Path to the processed jobs CSV
+ANALYSIS_DIR = 'analysis_files' # Directory containing analysis files
+DATA_DIR = 'data' # Directory containing data files
+QUALITATIVE_RESULTS_CSV = f'{ANALYSIS_DIR}/qualitative_analysis_results.csv'
+PROCESSED_JOBS_CSV = f'{DATA_DIR}/jobs_processed.csv' # Path to the processed jobs CSV
 ID_COLUMN_PROCESSED = 'lid' # Column name for job ID in processed jobs.csv
 DESC_COLUMN_PROCESSED = 'jobDescClean' # Column name for cleaned description
 # --- MODIFICATION: Define output filenames ---

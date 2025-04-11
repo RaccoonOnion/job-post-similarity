@@ -1,5 +1,5 @@
-# Big zip files and csvs
-jobs*
+# Data files (due to their big size)
+data/
 
 # macOS system files
 .DS_Store
@@ -11,6 +11,8 @@ __pycache__/
 # embedding files
 *.npy
 
-# unnecessary PDF
-Vector Search Implementation Plan.pdf
-Evaluation Plan Summary.pdf
+# local scripts
+verify_match.py
+app/fetch_jd.py
+analysis/qual*.md
+README.pdf
