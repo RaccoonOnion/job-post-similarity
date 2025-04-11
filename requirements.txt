@@ -1,10 +1,12 @@
-pandas
-matplotlib
-seaborn
-wordcloud
-bs4
-sentence_transformers
-numpy
-faiss-cpu # or faiss-gpu if you have a compatible GPU
-pickle
-scikit-learn
+pandas>=1.5,<2.3
+numpy>=1.21,<1.27
+sentence-transformers>=2.2.0,<3.0.0
+# Use faiss-cpu for general compatibility, or faiss-gpu if your target environment has CUDA
+faiss-cpu>=1.7.0,<1.9.0
+# OR (only choose one):
+# faiss-gpu>=1.7.0,<1.9.0
+scikit-learn>=1.0,<1.6
+beautifulsoup4>=4.9.0,<4.13.0
+matplotlib>=3.5,<3.10  # For evaluation plotting if run separately
+seaborn>=0.11,<0.14    # For evaluation plotting if run separately
+# Add any other specific dependencies if needed

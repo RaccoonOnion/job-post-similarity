@@ -16,59 +16,65 @@ try:
         generate_embeddings,
         save_embeddings_and_ids
     )
-    # Use the updated VectorSearch class (vector_search_gpu immersive)
-    from vector_search import VectorSearch
+    from vector_search import VectorSearch # Use the version with GPU support
     from evaluation import l2_to_cosine_similarity
 except ImportError as e:
     print(f"Error importing modules: {e}")
     print("Ensure preprocess_data.py, generate_embeddings.py, vector_search.py, and evaluation.py are accessible.")
     exit()
 
-# --- Configuration ---
+# --- Configuration from Environment Variables ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# File/Directory Paths
-DATA_DIR = 'data'
-ANALYSIS_DIR = 'analysis_files' # For final output
+# File/Directory Paths (relative to the script location inside the container: /app)
+# Reads from Env Vars or uses defaults
+DATA_DIR = os.environ.get('DATA_DIR', 'data')
+ANALYSIS_DIR = os.environ.get('ANALYSIS_DIR', 'analysis_files')
 
 RAW_CSV_PATH = os.path.join(DATA_DIR, 'jobs.csv')
 PROCESSED_CSV_PATH = os.path.join(DATA_DIR, 'jobs_processed.csv')
 EMBEDDINGS_PATH = os.path.join(DATA_DIR, 'job_embeddings.npy')
 IDS_PATH = os.path.join(DATA_DIR, 'job_ids.npy')
-INDEX_PATH = os.path.join(DATA_DIR, 'faiss_index.index') # Changed extension for clarity
+INDEX_PATH = os.path.join(DATA_DIR, 'faiss_index.index')
 ID_MAP_PATH = os.path.join(DATA_DIR, 'id_map.pkl')
 FINAL_OUTPUT_CSV = os.path.join(ANALYSIS_DIR, 'similarity_results.csv')
 
-# Model & Search Parameters
-EMBEDDING_MODEL_NAME = 'all-MiniLM-L6-v2'
-TEXT_COLUMN = 'jobDescClean'
-ID_COLUMN = 'lid'
-INDEX_DIMENSION = 384
-# --- Set Index Description to HNSW32 ---
-# INDEX_DESCRIPTION = 'HNSW32'       # HNSW (Fast, No training needed) cause seg fault on MacOS
-# Other options:
-# INDEX_DESCRIPTION = 'IndexFlatL2' # Exact Search (Slow, High Memory)
-INDEX_DESCRIPTION = 'IVF100,Flat'  # IVF Option (Requires training)
+# Model & Search Parameters from Env Vars (with defaults)
+EMBEDDING_MODEL_NAME = os.environ.get('EMBEDDING_MODEL_NAME', 'all-MiniLM-L6-v2')
+TEXT_COLUMN = os.environ.get('TEXT_COLUMN', 'jobDescClean')
+ID_COLUMN = os.environ.get('ID_COLUMN', 'lid')
+INDEX_DIMENSION = int(os.environ.get('INDEX_DIMENSION', '384'))
+INDEX_DESCRIPTION = os.environ.get('INDEX_DESCRIPTION', 'HNSW32') # Default to HNSW
+NEIGHBORS_K = int(os.environ.get('NEIGHBORS_K', '2'))
+SIMILARITY_THRESHOLD = float(os.environ.get('SIMILARITY_THRESHOLD', '0.90'))
+BATCH_SIZE = int(os.environ.get('BATCH_SIZE', '10000'))
+
+# Search Sample Size from Env Var
+search_sample_size_str = os.environ.get('SEARCH_SAMPLE_SIZE', '') # Read as string
+SEARCH_SAMPLE_SIZE = int(search_sample_size_str) if search_sample_size_str.isdigit() else None # Convert to int or None
+
+# GPU Configuration from Env Var
+USE_GPU_STR = os.environ.get('USE_GPU', 'False').lower()
+USE_GPU = USE_GPU_STR == 'true'
+
+logging.info("--- Configuration Loaded ---")
+logging.info(f"INDEX_DESCRIPTION: {INDEX_DESCRIPTION}")
+logging.info(f"SIMILARITY_THRESHOLD: {SIMILARITY_THRESHOLD}")
+logging.info(f"SEARCH_SAMPLE_SIZE: {SEARCH_SAMPLE_SIZE if SEARCH_SAMPLE_SIZE is not None else 'Full'}")
+logging.info(f"USE_GPU: {USE_GPU}")
+logging.info(f"DATA_DIR: {DATA_DIR}")
+logging.info(f"ANALYSIS_DIR: {ANALYSIS_DIR}")
 # --- ---
-NEIGHBORS_K = 2
-SIMILARITY_THRESHOLD = 0.90
-BATCH_SIZE = 10000
-
-# Search Sample Size
-SEARCH_SAMPLE_SIZE = None # None = search all; set number (e.g., 500) to sample
-
-# GPU Configuration
-USE_GPU = True # Set to True to attempt using GPU, False to force CPU
 
 # --- Helper to build Faiss index ---
+# (Keep build_faiss_index function as before)
 def build_faiss_index(vector_searcher, embeddings, ids, batch_size=BATCH_SIZE):
     """Builds the Faiss index by adding embeddings in batches."""
     logging.info("--- Building Faiss Index ---")
-    # Training is handled within VectorSearch based on index type and GPU status
     if not vector_searcher.index.is_trained:
         logging.info("Index requires training. Calling train method...")
         try:
-            vector_searcher.train(embeddings) # Pass all embeddings
+            vector_searcher.train(embeddings)
         except Exception as e:
             logging.error(f"Faiss index training failed: {e}")
             raise
@@ -104,11 +110,12 @@ def run_similarity_pipeline():
     if not os.path.exists(PROCESSED_CSV_PATH):
         logging.info(f"Processed data '{PROCESSED_CSV_PATH}' not found. Running preprocessing...")
         try:
+            # Check for raw CSV existence before calling preprocess
+            if not os.path.exists(RAW_CSV_PATH):
+                 logging.error(f"Raw data file '{RAW_CSV_PATH}' not found. Cannot preprocess.")
+                 return # Exit if raw data is missing
             preprocess_data(input_csv_path=RAW_CSV_PATH, output_csv_path=PROCESSED_CSV_PATH)
             logging.info("Preprocessing completed.")
-        except FileNotFoundError:
-             logging.error(f"Raw data file '{RAW_CSV_PATH}' not found. Cannot preprocess.")
-             return
         except Exception as e:
             logging.error(f"Preprocessing failed: {e}")
             return
@@ -136,6 +143,11 @@ def run_similarity_pipeline():
     if embeddings is None or job_ids is None:
         logging.info("Generating embeddings...")
         try:
+            # Ensure processed data exists before trying to load for embedding generation
+            if not os.path.exists(PROCESSED_CSV_PATH):
+                logging.error(f"Processed data file '{PROCESSED_CSV_PATH}' is needed for embedding generation but not found.")
+                return # Exit if processed data is missing
+
             df_processed = load_processed_data(PROCESSED_CSV_PATH) # Use function from generate_embeddings
             if TEXT_COLUMN not in df_processed.columns or ID_COLUMN not in df_processed.columns:
                  raise ValueError("Required columns missing in processed data for embedding generation.")
@@ -156,10 +168,9 @@ def run_similarity_pipeline():
 
     # --- 3. Vector Search Indexing ---
     logging.info("--- Step 3: Vector Search Indexing ---")
-    # Pass use_gpu flag and correct INDEX_DESCRIPTION
     vector_searcher = VectorSearch(
         dimension=INDEX_DIMENSION,
-        index_description=INDEX_DESCRIPTION, # Now set to 'HNSW32'
+        index_description=INDEX_DESCRIPTION,
         use_gpu=USE_GPU
     )
 
@@ -196,23 +207,24 @@ def run_similarity_pipeline():
     # Handle Sampling
     num_total_embeddings = len(embeddings)
     query_embeddings_to_search = embeddings
-    query_indices_to_map = range(num_total_embeddings)
+    query_indices_to_map = list(range(num_total_embeddings)) # Ensure it's a list for consistent indexing
+    num_queries = num_total_embeddings
 
-    if SEARCH_SAMPLE_SIZE is not None and SEARCH_SAMPLE_SIZE < num_total_embeddings:
+    if SEARCH_SAMPLE_SIZE is not None and SEARCH_SAMPLE_SIZE > 0 and SEARCH_SAMPLE_SIZE < num_total_embeddings:
         logging.info(f"Sampling {SEARCH_SAMPLE_SIZE} embeddings for queries...")
-        if SEARCH_SAMPLE_SIZE <= 0:
-             logging.warning("SEARCH_SAMPLE_SIZE must be positive. Defaulting to full search.")
-        else:
-            query_indices_to_map = random.sample(range(num_total_embeddings), SEARCH_SAMPLE_SIZE)
-            query_embeddings_to_search = embeddings[query_indices_to_map]
-            logging.info(f"Using {len(query_embeddings_to_search)} sampled embeddings for search.")
-    else:
-        logging.info(f"Performing full search using all {num_total_embeddings} embeddings as queries.")
+        query_indices_to_map = random.sample(range(num_total_embeddings), SEARCH_SAMPLE_SIZE)
+        query_embeddings_to_search = embeddings[query_indices_to_map]
+        num_queries = len(query_embeddings_to_search)
+        logging.info(f"Using {num_queries} sampled embeddings for search.")
+    elif SEARCH_SAMPLE_SIZE is not None and SEARCH_SAMPLE_SIZE <= 0:
+        logging.warning("SEARCH_SAMPLE_SIZE must be positive. Defaulting to full search.")
+        logging.info(f"Performing full search using all {num_queries} embeddings as queries.")
+    else: # SEARCH_SAMPLE_SIZE is None or >= num_total_embeddings
+        logging.info(f"Performing full search using all {num_queries} embeddings as queries.")
 
 
-    logging.info(f"Performing nearest neighbor search (k={NEIGHBORS_K}) for {len(query_embeddings_to_search)} items...")
+    logging.info(f"Performing nearest neighbor search (k={NEIGHBORS_K}) for {num_queries} items...")
     start_search_time = time.time()
-    # Use the search method from the VectorSearch class
     distances_l2, neighbor_ids_list = vector_searcher.search(query_embeddings_to_search, NEIGHBORS_K)
     end_search_time = time.time()
     logging.info(f"Search completed in {end_search_time - start_search_time:.2f} seconds.")
@@ -221,20 +233,19 @@ def run_similarity_pipeline():
     results = []
     processed_pairs = set()
 
-    # Iterate over sampled results
-    for i in range(len(query_embeddings_to_search)):
+    for i in range(num_queries):
         original_query_index = query_indices_to_map[i]
         query_id = job_ids[original_query_index]
 
         if len(neighbor_ids_list[i]) > 1:
-            neighbor_id = neighbor_ids_list[i][1] # Already mapped to original ID
+            neighbor_id = neighbor_ids_list[i][1]
             neighbor_l2_dist = distances_l2[i][1]
         else:
-             logging.warning(f"Query {query_id} (index {i}) returned fewer than 2 neighbors.")
+             logging.warning(f"Query {query_id} (original index {original_query_index}) returned fewer than 2 neighbors.")
              continue
 
         if neighbor_id is not None:
-            if query_id == neighbor_id: continue # Skip self-comparison
+            if query_id == neighbor_id: continue
 
             similarity_score = l2_to_cosine_similarity(neighbor_l2_dist)
 

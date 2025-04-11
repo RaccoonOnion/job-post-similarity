@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  similarity_app:
+    # Build the Docker image using the Dockerfile in the current directory (.)
+    build: .
+    # Name the container (optional)
+    container_name: job_similarity_pipeline
+    # Mount local directories into the container for data persistence
+    volumes:
+      # Mount ./data on your host machine to /app/data in the container
+      # - Place jobs.csv in the ./data folder on your host.
+      # - Output files (processed csv, npy, index, pkl) will be saved here.
+      - ./data:/app/data
+      # Mount ./analysis_files on your host to /app/analysis_files in the container
+      # - Final similarity_results.csv will be saved here.
+      - ./analysis_files:/app/analysis_files
+    # Load environment variables from the .env file in the current directory
+    env_file:
+      - .env
+    # Optional: Add resource limits if needed
+    # deploy:
+    #   resources:
+    #     limits:
+    #       memory: 4G
+    #     reservations:
+    #       memory: 2G
+    # Optional: Add GPU support if using faiss-gpu and host has NVIDIA GPU/drivers
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+# Define named volumes if you prefer them over bind mounts (optional)
+# volumes:
+#   data_volume:
+#   analysis_volume:
